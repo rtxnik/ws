@@ -52,13 +52,13 @@ var groupedUsageTemplate = `Usage:{{if .Runnable}}
 
 {{- if .HasAvailableSubCommands}}
 
-` + fmt.Sprintf("%s", output.SectionStyle.Render("Workspace Commands:")) + `{{range .Commands}}{{if (eq (index (groupTag .) 0) "workspace")}}
+` + output.SectionStyle.Render("Workspace Commands:") + `{{range .Commands}}{{if (eq (index (groupTag .) 0) "workspace")}}
   {{rpad .Name .NamePadding}} {{.Short}}{{end}}{{end}}
 
-` + fmt.Sprintf("%s", output.SectionStyle.Render("Profile Commands:")) + `{{range .Commands}}{{if (eq (index (groupTag .) 0) "profile")}}
+` + output.SectionStyle.Render("Profile Commands:") + `{{range .Commands}}{{if (eq (index (groupTag .) 0) "profile")}}
   {{rpad .Name .NamePadding}} {{.Short}}{{end}}{{end}}
 
-` + fmt.Sprintf("%s", output.SectionStyle.Render("Proxy Commands:")) + `{{range .Commands}}{{if (eq (index (groupTag .) 0) "proxy")}}
+` + output.SectionStyle.Render("Proxy Commands:") + `{{range .Commands}}{{if (eq (index (groupTag .) 0) "proxy")}}
   {{rpad .Name .NamePadding}} {{.Short}}{{end}}{{end}}
 {{- end}}
 
