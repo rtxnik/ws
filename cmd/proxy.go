@@ -6,6 +6,7 @@ import (
 	"github.com/rtxnik/ws/internal/config"
 	"github.com/rtxnik/ws/internal/docker"
 	"github.com/rtxnik/ws/internal/output"
+	"github.com/rtxnik/ws/internal/vless"
 	"github.com/spf13/cobra"
 )
 
@@ -212,7 +213,40 @@ var proxyUpdateCmd = &cobra.Command{
 	},
 }
 
+var proxyInitCmd = &cobra.Command{
+	Use:   "init <vless-uri>",
+	Short: "Generate xray config from VLESS URI",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := config.Load()
+		uri := args[0]
+
+		parsed, err := vless.Parse(uri)
+		if err != nil {
+			output.Die(err.Error())
+		}
+
+		add, _ := cmd.Flags().GetBool("add")
+
+		if add {
+			if err := vless.AddNode(cfg.XrayConfig, parsed); err != nil {
+				output.Die(err.Error())
+			}
+			output.Success(fmt.Sprintf("Added node %q to config", parsed.Remark))
+		} else {
+			if err := vless.WriteNewConfig(cfg.XrayConfig, parsed); err != nil {
+				output.Die(err.Error())
+			}
+			output.Success(fmt.Sprintf("Config written to %s", cfg.XrayConfig))
+		}
+
+		output.Detail(fmt.Sprintf("Transport: %s, Security: %s", parsed.Network, parsed.Security))
+	},
+}
+
 func init() {
+	proxyInitCmd.Flags().Bool("add", false, "Add node to existing config instead of creating new")
+
 	proxyCmd.AddCommand(proxyUpCmd)
 	proxyCmd.AddCommand(proxyDownCmd)
 	proxyCmd.AddCommand(proxyStatusCmd)
@@ -222,5 +256,6 @@ func init() {
 	proxyCmd.AddCommand(proxyTestCmd)
 	proxyCmd.AddCommand(proxyDebugCmd)
 	proxyCmd.AddCommand(proxyUpdateCmd)
+	proxyCmd.AddCommand(proxyInitCmd)
 	rootCmd.AddCommand(proxyCmd)
 }
