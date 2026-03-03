@@ -168,12 +168,17 @@ var deleteCmd = &cobra.Command{
 }
 
 var sshCmd = &cobra.Command{
-	Use:         "ssh <name>",
+	Use:         "ssh [name]",
 	Short:       "SSH into a workspace",
-	Args:        cobra.ExactArgs(1),
+	Args:        cobra.MaximumNArgs(1),
 	Annotations: wsAnnotation,
 	Run: func(cmd *cobra.Command, args []string) {
-		name := args[0]
+		var name string
+		if len(args) > 0 {
+			name = args[0]
+		} else {
+			name = selectWorkspace()
+		}
 		// Rename tmux window if inside tmux.
 		if tmux := os.Getenv("TMUX"); tmux != "" {
 			_ = exec.Command("tmux", "rename-window", name).Run()
@@ -185,17 +190,48 @@ var sshCmd = &cobra.Command{
 }
 
 var codeCmd = &cobra.Command{
-	Use:         "code <name>",
+	Use:         "code [name]",
 	Short:       "Open workspace in VS Code",
-	Args:        cobra.ExactArgs(1),
+	Args:        cobra.MaximumNArgs(1),
 	Annotations: wsAnnotation,
 	Run: func(cmd *cobra.Command, args []string) {
-		name := args[0]
+		var name string
+		if len(args) > 0 {
+			name = args[0]
+		} else {
+			name = selectWorkspace()
+		}
 		output.Info(fmt.Sprintf("Opening workspace %q in VS Code...", name))
 		if err := workspace.DevpodCode(name); err != nil {
 			output.Die(err.Error())
 		}
 	},
+}
+
+// selectWorkspace shows an interactive list of workspaces and returns
+// the selected name. Exits if no workspaces exist or selection is invalid.
+func selectWorkspace() string {
+	cfg := config.Load()
+	workspaces, err := workspace.List(cfg)
+	if err != nil {
+		output.Die(err.Error())
+	}
+	if len(workspaces) == 0 {
+		output.Die("no workspaces found")
+	}
+
+	fmt.Fprintln(os.Stderr, output.SectionStyle.Render("Select workspace:"))
+	for i, ws := range workspaces {
+		status := formatStatus(ws.Status)
+		fmt.Fprintf(os.Stderr, "  %d) %s  %s\n", i+1, ws.Name, status)
+	}
+	fmt.Fprintf(os.Stderr, "\n> ")
+
+	var choice int
+	if _, err := fmt.Scanln(&choice); err != nil || choice < 1 || choice > len(workspaces) {
+		output.Die("invalid selection")
+	}
+	return workspaces[choice-1].Name
 }
 
 func formatStatus(s string) string {
