@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -288,7 +289,7 @@ func BuildProxyImage(cfg config.Config, version string) error {
 }
 
 // ProxyConnectedContainers returns names of running containers that share
-// the proxy container's network namespace (--network=container:dev-proxy).
+// the proxy container's network namespace.
 func ProxyConnectedContainers(cfg config.Config) ([]string, error) {
 	cli, err := newClient()
 	if err != nil {
@@ -302,21 +303,36 @@ func ProxyConnectedContainers(cfg config.Config) ([]string, error) {
 		return nil, fmt.Errorf("list containers: %w", err)
 	}
 
-	target := "container:" + cfg.ProxyContainer
+	refs := proxyNetworkRefs(cli, ctx, cfg)
 	var names []string
 	for _, c := range containers {
-		if c.HostConfig.NetworkMode == target {
-			name := c.ID[:12]
-			if len(c.Names) > 0 {
-				name = c.Names[0]
-				if len(name) > 0 && name[0] == '/' {
-					name = name[1:]
-				}
-			}
-			names = append(names, name)
+		if !refs[string(c.HostConfig.NetworkMode)] {
+			continue
 		}
+		name := c.ID[:12]
+		if len(c.Names) > 0 {
+			name = c.Names[0]
+			if len(name) > 0 && name[0] == '/' {
+				name = name[1:]
+			}
+		}
+		names = append(names, name)
 	}
 	return names, nil
+}
+
+// proxyNetworkRefs returns the set of NetworkMode values that reference
+// the proxy container. Docker may store either the name or the resolved
+// container ID depending on version, so we match both.
+func proxyNetworkRefs(cli *client.Client, ctx context.Context, cfg config.Config) map[string]bool {
+	refs := map[string]bool{
+		"container:" + cfg.ProxyContainer: true,
+	}
+	info, err := cli.ContainerInspect(ctx, cfg.ProxyContainer)
+	if err == nil {
+		refs["container:"+info.ID] = true
+	}
+	return refs
 }
 
 // connectedContainerIDs returns IDs of all containers (including stopped)
@@ -327,10 +343,10 @@ func connectedContainerIDs(cli *client.Client, ctx context.Context, cfg config.C
 		return nil, err
 	}
 
-	target := "container:" + cfg.ProxyContainer
+	refs := proxyNetworkRefs(cli, ctx, cfg)
 	var ids []string
 	for _, c := range containers {
-		if c.HostConfig.NetworkMode == target {
+		if refs[string(c.HostConfig.NetworkMode)] {
 			ids = append(ids, c.ID)
 		}
 	}
@@ -349,8 +365,11 @@ func removeContainers(cli *client.Client, ctx context.Context, ids []string) int
 	return n
 }
 
-// CleanStaleProxyRefs removes stopped containers whose proxy network
-// reference is stale (container created before the current proxy).
+// CleanStaleProxyRefs removes stopped containers whose network namespace
+// references a container that no longer exists. Docker resolves
+// --network=container:<name> to a container ID at creation time; after
+// the referenced container is removed the stored ID becomes stale and
+// the container cannot be restarted.
 // Returns the number of removed containers.
 func CleanStaleProxyRefs(cfg config.Config) int {
 	cli, err := newClient()
@@ -360,28 +379,19 @@ func CleanStaleProxyRefs(cfg config.Config) int {
 	defer cli.Close()
 
 	ctx := context.Background()
-
-	proxyInfo, err := cli.ContainerInspect(ctx, cfg.ProxyContainer)
-	if err != nil {
-		// Proxy container doesn't exist — remove all referencing containers.
-		ids, _ := connectedContainerIDs(cli, ctx, cfg)
-		return removeContainers(cli, ctx, ids)
-	}
-
-	proxyCreated, err := time.Parse(time.RFC3339Nano, proxyInfo.Created)
-	if err != nil {
-		return 0
-	}
-
 	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
 		return 0
 	}
 
-	target := "container:" + cfg.ProxyContainer
 	var staleIDs []string
 	for _, c := range containers {
-		if c.HostConfig.NetworkMode == target && c.State != "running" && c.Created < proxyCreated.Unix() {
+		nm := string(c.HostConfig.NetworkMode)
+		if !strings.HasPrefix(nm, "container:") || c.State == "running" {
+			continue
+		}
+		ref := nm[len("container:"):]
+		if _, err := cli.ContainerInspect(ctx, ref); err != nil {
 			staleIDs = append(staleIDs, c.ID)
 		}
 	}
