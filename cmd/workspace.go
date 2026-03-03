@@ -212,8 +212,8 @@ var codeCmd = &cobra.Command{
 	},
 }
 
-// selectWorkspace shows an interactive list of workspaces and returns
-// the selected name. Exits if no workspaces exist or selection is invalid.
+// selectWorkspace shows an interactive selector of workspaces and returns
+// the selected name. Exits if no workspaces exist or user cancels.
 func selectWorkspace() string {
 	cfg := config.Load()
 	workspaces, err := workspace.List(cfg)
@@ -224,18 +224,13 @@ func selectWorkspace() string {
 		output.Die("no workspaces found")
 	}
 
-	fmt.Fprintln(os.Stderr, output.SectionStyle.Render("Select workspace:"))
-	for i, ws := range workspaces {
-		status := formatStatus(ws.Status)
-		fmt.Fprintf(os.Stderr, "  %d) %s  %s\n", i+1, ws.Name, status)
+	opts := make([]output.SelectOption, 0, len(workspaces))
+	for _, ws := range workspaces {
+		label := output.StatusLabel(ws.Name, strings.ToLower(ws.Status))
+		opts = append(opts, output.SelectOption{Label: label, Value: ws.Name})
 	}
-	fmt.Fprintf(os.Stderr, "\n> ")
 
-	var choice int
-	if _, err := fmt.Scanln(&choice); err != nil || choice < 1 || choice > len(workspaces) {
-		output.Die("invalid selection")
-	}
-	return workspaces[choice-1].Name
+	return output.Select("Select workspace:", opts)
 }
 
 func formatStatus(s string) string {
