@@ -153,10 +153,16 @@ var proxyRebuildCmd = &cobra.Command{
 			warnProxyConnected(cfg)
 		}
 
+		var reconnected int
 		if err := output.RunWithSpinner("Rebuilding proxy image", func() error {
-			return docker.ProxyRebuild(cfg)
+			var err error
+			reconnected, err = docker.ProxyRebuild(cfg)
+			return err
 		}); err != nil {
 			output.Die(err.Error())
+		}
+		if reconnected > 0 {
+			output.Info(fmt.Sprintf("Reconnected %d workspace(s)", reconnected))
 		}
 	},
 }
@@ -246,13 +252,15 @@ var proxyUpdateCmd = &cobra.Command{
 			output.Die(err.Error())
 		}
 
-		// Auto-start if config exists.
-		if _, err := docker.ProxyStatus(cfg); err == nil {
-			output.Info("Starting proxy...")
-			if err := docker.ProxyRestart(cfg); err != nil {
-				output.Warn(err.Error())
-			} else {
-				output.Success("Proxy restarted with new version")
+		// Recreate proxy container to use the new image.
+		output.Info("Restarting proxy...")
+		n, err := docker.ProxyRecreate(cfg)
+		if err != nil {
+			output.Warn(err.Error())
+		} else {
+			output.Success("Proxy restarted with new version")
+			if n > 0 {
+				output.Info(fmt.Sprintf("Reconnected %d workspace(s)", n))
 			}
 		}
 	},

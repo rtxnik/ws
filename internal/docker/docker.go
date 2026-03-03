@@ -101,10 +101,21 @@ func ProxyUp(cfg config.Config) error {
 		return fmt.Errorf("create container: %w", err)
 	}
 
-	return cli.ContainerStart(ctx, resp.ID, container.StartOptions{})
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return err
+	}
+
+	// Best-effort: restart workspace containers that reference the proxy
+	// so they re-resolve the network namespace after recreation.
+	ids, _ := connectedContainerIDs(cli, ctx, cfg)
+	restartContainers(cli, ctx, ids)
+
+	return nil
 }
 
-// ProxyDown stops and removes the proxy container.
+// ProxyDown stops the proxy container, preserving it for later restart.
+// The container is kept so that workspace containers sharing its network
+// namespace via --network=container:<name> retain a valid reference.
 func ProxyDown(cfg config.Config) error {
 	cli, err := newClient()
 	if err != nil {
@@ -115,7 +126,6 @@ func ProxyDown(cfg config.Config) error {
 	ctx := context.Background()
 	timeout := 10
 	_ = cli.ContainerStop(ctx, cfg.ProxyContainer, container.StopOptions{Timeout: &timeout})
-	_ = cli.ContainerRemove(ctx, cfg.ProxyContainer, container.RemoveOptions{Force: true})
 	return nil
 }
 
@@ -187,37 +197,74 @@ func ProxyLogs(cfg config.Config, n int) (string, error) {
 }
 
 // ProxyRebuild rebuilds the proxy image with minimal downtime.
-// Build happens first (while proxy may still be running), then a quick
-// container restart minimizes the network gap to seconds.
-func ProxyRebuild(cfg config.Config) error {
+// Build happens first (while proxy may still be running), then the
+// container is recreated and workspace connections are restored.
+// Returns the number of reconnected workspace containers.
+func ProxyRebuild(cfg config.Config) (int, error) {
 	st, _ := ProxyStatus(cfg)
 	wasRunning := st.Running
 
 	// Build new image first — Docker allows reusing the tag while the
 	// old image is still in use (old image becomes dangling).
 	if err := BuildProxyImage(cfg, ""); err != nil {
-		return err
+		return 0, err
 	}
 
-	// Quick swap: stop old container and start new one.
+	// Recreate the container to pick up the new image.
+	var reconnected int
 	if wasRunning {
-		_ = ProxyDown(cfg)
-		if err := ProxyUp(cfg); err != nil {
-			return fmt.Errorf("restart after rebuild: %w", err)
+		n, err := proxyRecreate(cfg)
+		if err != nil {
+			return 0, fmt.Errorf("restart after rebuild: %w", err)
 		}
+		reconnected = n
 	}
 
 	// Clean up dangling old image (best-effort).
 	pruneCmd := exec.Command("docker", "image", "prune", "-f")
 	_ = pruneCmd.Run()
 
-	return nil
+	return reconnected, nil
 }
 
 // ProxyRestart stops and starts the proxy container.
 func ProxyRestart(cfg config.Config) error {
 	_ = ProxyDown(cfg)
 	return ProxyUp(cfg)
+}
+
+// ProxyRecreate removes and recreates the proxy container, then restarts
+// workspace containers that share its network namespace.
+// Returns the number of reconnected workspace containers.
+func ProxyRecreate(cfg config.Config) (int, error) {
+	return proxyRecreate(cfg)
+}
+
+func proxyRecreate(cfg config.Config) (int, error) {
+	cli, err := newClient()
+	if err != nil {
+		return 0, fmt.Errorf("docker client: %w", err)
+	}
+	defer cli.Close()
+
+	ctx := context.Background()
+
+	// Find workspace containers sharing the proxy network.
+	ids, _ := connectedContainerIDs(cli, ctx, cfg)
+
+	// Remove old proxy container.
+	timeout := 10
+	_ = cli.ContainerStop(ctx, cfg.ProxyContainer, container.StopOptions{Timeout: &timeout})
+	_ = cli.ContainerRemove(ctx, cfg.ProxyContainer, container.RemoveOptions{Force: true})
+
+	// Create and start a new proxy container.
+	if err := ProxyUp(cfg); err != nil {
+		return 0, err
+	}
+
+	// Restart connected workspace containers to re-resolve the namespace.
+	n := restartContainers(cli, ctx, ids)
+	return n, nil
 }
 
 // BuildProxyImage builds the proxy Docker image. If version is non-empty,
@@ -266,6 +313,38 @@ func ProxyConnectedContainers(cfg config.Config) ([]string, error) {
 		}
 	}
 	return names, nil
+}
+
+// connectedContainerIDs returns IDs of all containers (including stopped)
+// that share the proxy container's network namespace.
+func connectedContainerIDs(cli *client.Client, ctx context.Context, cfg config.Config) ([]string, error) {
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return nil, err
+	}
+
+	target := "container:" + cfg.ProxyContainer
+	var ids []string
+	for _, c := range containers {
+		if c.HostConfig.NetworkMode == target {
+			ids = append(ids, c.ID)
+		}
+	}
+	return ids, nil
+}
+
+// restartContainers restarts each container by ID and returns the number
+// of successful restarts.
+func restartContainers(cli *client.Client, ctx context.Context, ids []string) int {
+	timeout := 10
+	opts := container.StopOptions{Timeout: &timeout}
+	var n int
+	for _, id := range ids {
+		if err := cli.ContainerRestart(ctx, id, opts); err == nil {
+			n++
+		}
+	}
+	return n
 }
 
 func imageExists(ctx context.Context, cli *client.Client, image string) bool {
