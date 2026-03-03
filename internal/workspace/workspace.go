@@ -114,11 +114,11 @@ func devpodStatuses() map[string]string {
 		return result
 	}
 	for _, item := range items {
-		status, err := exec.Command("devpod", "status", item.ID).Output()
+		out, err := exec.Command("devpod", "status", item.ID).CombinedOutput()
 		if err != nil {
 			continue
 		}
-		result[item.ID] = strings.TrimSpace(string(status))
+		result[item.ID] = parseDevpodStatus(string(out))
 	}
 	return result
 }
@@ -162,6 +162,20 @@ func stripJSONCComments(s string) string {
 		b.WriteByte(s[i])
 	}
 	return b.String()
+}
+
+// parseDevpodStatus extracts the status from devpod status output.
+// Example input: "18:33:52 info Workspace 'dotfiles' is 'Running'"
+func parseDevpodStatus(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		if i := strings.LastIndex(line, " is '"); i != -1 {
+			rest := line[i+5:]
+			if j := strings.Index(rest, "'"); j != -1 {
+				return rest[:j]
+			}
+		}
+	}
+	return ""
 }
 
 func copyFile(src, dst string) error {
