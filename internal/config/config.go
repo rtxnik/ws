@@ -12,6 +12,9 @@ type Config struct {
 	XrayConfig     string
 	ProxyContainer string
 	ProxyImage     string
+	ProxyNetwork   string
+	ProxySubnet    string
+	ProxyIP        string
 }
 
 func Load() Config {
@@ -24,6 +27,9 @@ func Load() Config {
 		XrayConfig:     envOr("XRAY_CONFIG", filepath.Join(home, ".config", "xray", "config.json")),
 		ProxyContainer: envOr("WS_PROXY_CONTAINER", "dev-proxy"),
 		ProxyImage:     envOr("WS_PROXY_IMAGE", "devpod-proxy"),
+		ProxyNetwork:   envOr("WS_PROXY_NETWORK", "ws-proxy"),
+		ProxySubnet:    envOr("WS_PROXY_SUBNET", "172.28.0.0/16"),
+		ProxyIP:        envOr("WS_PROXY_IP", "172.28.0.2"),
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/rtxnik/ws/internal/config"
 )
@@ -60,7 +61,8 @@ func ProxyStatus(cfg config.Config) (Status, error) {
 	}, nil
 }
 
-// ProxyUp starts the proxy container. Requires image to be pre-built.
+// ProxyUp starts the proxy container on the ws-proxy bridge network.
+// Requires image to be pre-built.
 func ProxyUp(cfg config.Config) error {
 	cli, err := newClient()
 	if err != nil {
@@ -87,6 +89,10 @@ func ProxyUp(cfg config.Config) error {
 		return fmt.Errorf("xray config not found at %s, run 'ws proxy init' first", cfg.XrayConfig)
 	}
 
+	if err := ensureProxyNetwork(cli, ctx, cfg); err != nil {
+		return fmt.Errorf("create proxy network: %w", err)
+	}
+
 	resp, err := cli.ContainerCreate(ctx,
 		&container.Config{
 			Image: cfg.ProxyImage,
@@ -96,30 +102,27 @@ func ProxyUp(cfg config.Config) error {
 			CapAdd:        []string{"NET_ADMIN"},
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 		},
-		nil, nil, cfg.ProxyContainer,
+		&network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				cfg.ProxyNetwork: {
+					IPAMConfig: &network.EndpointIPAMConfig{
+						IPv4Address: cfg.ProxyIP,
+					},
+				},
+			},
+		},
+		nil, cfg.ProxyContainer,
 	)
 	if err != nil {
 		return fmt.Errorf("create container: %w", err)
 	}
 
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return err
-	}
-
-	// Remove workspace containers that referenced the old proxy.
-	// Docker resolves --network=container:<name> to a container ID at
-	// creation time. After proxy recreation the stored ID is stale and
-	// restart alone cannot fix it — the containers must be removed so
-	// that devpod recreates them with a fresh network reference.
-	ids, _ := connectedContainerIDs(cli, ctx, cfg)
-	removeContainers(cli, ctx, ids)
-
-	return nil
+	return cli.ContainerStart(ctx, resp.ID, container.StartOptions{})
 }
 
-// ProxyDown stops the proxy container, preserving it for later restart.
-// The container is kept so that workspace containers sharing its network
-// namespace via --network=container:<name> retain a valid reference.
+// ProxyDown stops the proxy container. Workspace containers on the
+// ws-proxy bridge network are unaffected and resume connectivity
+// when the proxy is started again.
 func ProxyDown(cfg config.Config) error {
 	cli, err := newClient()
 	if err != nil {
@@ -202,33 +205,27 @@ func ProxyLogs(cfg config.Config, n int) (string, error) {
 
 // ProxyRebuild rebuilds the proxy image with minimal downtime.
 // Build happens first (while proxy may still be running), then the
-// container is recreated and workspace connections are restored.
-// Returns the number of reconnected workspace containers.
-func ProxyRebuild(cfg config.Config) (int, error) {
+// container is recreated on the same bridge network. Workspace
+// containers are unaffected.
+func ProxyRebuild(cfg config.Config) error {
 	st, _ := ProxyStatus(cfg)
 	wasRunning := st.Running
 
-	// Build new image first — Docker allows reusing the tag while the
-	// old image is still in use (old image becomes dangling).
 	if err := BuildProxyImage(cfg, ""); err != nil {
-		return 0, err
+		return err
 	}
 
-	// Recreate the container to pick up the new image.
-	var reconnected int
 	if wasRunning {
-		n, err := proxyRecreate(cfg)
-		if err != nil {
-			return 0, fmt.Errorf("restart after rebuild: %w", err)
+		if err := proxyRecreate(cfg); err != nil {
+			return fmt.Errorf("restart after rebuild: %w", err)
 		}
-		reconnected = n
 	}
 
 	// Clean up dangling old image (best-effort).
 	pruneCmd := exec.Command("docker", "image", "prune", "-f")
 	_ = pruneCmd.Run()
 
-	return reconnected, nil
+	return nil
 }
 
 // ProxyRestart stops and starts the proxy container.
@@ -237,39 +234,27 @@ func ProxyRestart(cfg config.Config) error {
 	return ProxyUp(cfg)
 }
 
-// ProxyRecreate removes and recreates the proxy container, then removes
-// workspace containers with stale network references so that devpod
-// recreates them on next start.
-// Returns the number of removed workspace containers.
-func ProxyRecreate(cfg config.Config) (int, error) {
+// ProxyRecreate removes and recreates the proxy container on the
+// ws-proxy bridge network. Workspace containers are unaffected —
+// they keep their own network namespace and resume connectivity
+// when the new proxy comes up with the same IP.
+func ProxyRecreate(cfg config.Config) error {
 	return proxyRecreate(cfg)
 }
 
-func proxyRecreate(cfg config.Config) (int, error) {
+func proxyRecreate(cfg config.Config) error {
 	cli, err := newClient()
 	if err != nil {
-		return 0, fmt.Errorf("docker client: %w", err)
+		return fmt.Errorf("docker client: %w", err)
 	}
 	defer cli.Close()
 
 	ctx := context.Background()
-
-	// Find workspace containers sharing the proxy network.
-	ids, _ := connectedContainerIDs(cli, ctx, cfg)
-
-	// Remove old proxy container.
 	timeout := 10
 	_ = cli.ContainerStop(ctx, cfg.ProxyContainer, container.StopOptions{Timeout: &timeout})
 	_ = cli.ContainerRemove(ctx, cfg.ProxyContainer, container.RemoveOptions{Force: true})
 
-	// Create and start a new proxy container.
-	if err := ProxyUp(cfg); err != nil {
-		return 0, err
-	}
-
-	// Remove stale workspace containers (see ProxyUp comment).
-	n := removeContainers(cli, ctx, ids)
-	return n, nil
+	return ProxyUp(cfg)
 }
 
 // BuildProxyImage builds the proxy Docker image. If version is non-empty,
@@ -288,8 +273,8 @@ func BuildProxyImage(cfg config.Config, version string) error {
 	return cmd.Run()
 }
 
-// ProxyConnectedContainers returns names of running containers that share
-// the proxy container's network namespace.
+// ProxyConnectedContainers returns names of running containers on the
+// ws-proxy bridge network (excluding the proxy container itself).
 func ProxyConnectedContainers(cfg config.Config) ([]string, error) {
 	cli, err := newClient()
 	if err != nil {
@@ -298,25 +283,17 @@ func ProxyConnectedContainers(cfg config.Config) ([]string, error) {
 	defer cli.Close()
 
 	ctx := context.Background()
-	containers, err := cli.ContainerList(ctx, container.ListOptions{All: false})
+	info, err := cli.NetworkInspect(ctx, cfg.ProxyNetwork, network.InspectOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("list containers: %w", err)
+		return nil, nil
 	}
 
-	refs := proxyNetworkRefs(cli, ctx, cfg)
 	var names []string
-	for _, c := range containers {
-		if !refs[string(c.HostConfig.NetworkMode)] {
+	for _, ep := range info.Containers {
+		if ep.Name == cfg.ProxyContainer {
 			continue
 		}
-		name := c.ID[:12]
-		if len(c.Names) > 0 {
-			name = c.Names[0]
-			if len(name) > 0 && name[0] == '/' {
-				name = name[1:]
-			}
-		}
-		names = append(names, name)
+		names = append(names, ep.Name)
 	}
 	return names, nil
 }
@@ -397,6 +374,23 @@ func CleanStaleProxyRefs(cfg config.Config) int {
 	}
 
 	return removeContainers(cli, ctx, staleIDs)
+}
+
+// ensureProxyNetwork creates the ws-proxy bridge network if it doesn't exist.
+func ensureProxyNetwork(cli *client.Client, ctx context.Context, cfg config.Config) error {
+	_, err := cli.NetworkInspect(ctx, cfg.ProxyNetwork, network.InspectOptions{})
+	if err == nil {
+		return nil
+	}
+	_, err = cli.NetworkCreate(ctx, cfg.ProxyNetwork, network.CreateOptions{
+		Driver: "bridge",
+		IPAM: &network.IPAM{
+			Config: []network.IPAMConfig{
+				{Subnet: cfg.ProxySubnet},
+			},
+		},
+	})
+	return err
 }
 
 func imageExists(ctx context.Context, cli *client.Client, image string) bool {

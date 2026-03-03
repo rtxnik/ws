@@ -63,7 +63,7 @@ func Create(cfg config.Config, name, profile string, withProxy bool) error {
 
 	// If proxy requested, patch devcontainer.json to add proxy network.
 	if withProxy {
-		if err := patchProxyNetwork(filepath.Join(dcDir, "devcontainer.json")); err != nil {
+		if err := patchProxyNetwork(filepath.Join(dcDir, "devcontainer.json"), cfg.ProxyNetwork, cfg.ProxyIP); err != nil {
 			return fmt.Errorf("patch proxy network: %w", err)
 		}
 	}
@@ -170,7 +170,7 @@ func hasProxyNetwork(cfg config.Config, name string) bool {
 		return false
 	}
 	for _, arg := range dc.RunArgs {
-		if strings.HasPrefix(arg, "--network=container:") {
+		if strings.HasPrefix(arg, "--network=container:") || arg == "--network="+cfg.ProxyNetwork {
 			return true
 		}
 	}
@@ -222,7 +222,7 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, data, 0o644)
 }
 
-func patchProxyNetwork(dcPath string) error {
+func patchProxyNetwork(dcPath, proxyNetwork, proxyIP string) error {
 	data, err := os.ReadFile(dcPath)
 	if err != nil {
 		return err
@@ -234,9 +234,27 @@ func patchProxyNetwork(dcPath string) error {
 		return err
 	}
 
+	// Connect workspace to the proxy bridge network with NET_ADMIN
+	// for route override in postStartCommand.
 	runArgs, _ := dc["runArgs"].([]any)
-	runArgs = append(runArgs, "--network=container:dev-proxy")
+	runArgs = append(runArgs, "--network="+proxyNetwork, "--cap-add=NET_ADMIN")
 	dc["runArgs"] = runArgs
+
+	// Add postStartCommand to route traffic through the proxy.
+	routeCmd := fmt.Sprintf("sudo ip route replace default via %s 2>/dev/null || true", proxyIP)
+	switch existing := dc["postStartCommand"].(type) {
+	case map[string]any:
+		existing["proxy-route"] = routeCmd
+	case string:
+		dc["postStartCommand"] = map[string]any{
+			"setup":       existing,
+			"proxy-route": routeCmd,
+		}
+	default:
+		dc["postStartCommand"] = map[string]any{
+			"proxy-route": routeCmd,
+		}
+	}
 
 	out, err := json.MarshalIndent(dc, "", "\t")
 	if err != nil {
