@@ -4,11 +4,29 @@ import (
 	"fmt"
 	"text/template"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/rtxnik/ws/internal/output"
 	"github.com/spf13/cobra"
 )
 
 var version = "dev"
+
+// logo renders a compact ASCII logo with gruvbox gradient.
+func logo() string {
+	lines := []struct {
+		text  string
+		color lipgloss.Color
+	}{
+		{"╦ ╦╔═╗", output.Orange},
+		{"║║║╚═╗", output.Yellow},
+		{"╚╩╝╚═╝", output.Green},
+	}
+	var s string
+	for _, l := range lines {
+		s += lipgloss.NewStyle().Foreground(l.color).Bold(true).Render(l.text) + "\n"
+	}
+	return s
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "ws",
@@ -24,7 +42,7 @@ func Execute() {
 
 func init() {
 	rootCmd.Version = version
-	rootCmd.SetVersionTemplate("ws {{.Version}}\n")
+	rootCmd.SetVersionTemplate(logo() + "ws {{.Version}}\n")
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 
 	cobra.AddTemplateFunc("groupTag", func(cmd *cobra.Command) []string {
