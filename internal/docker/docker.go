@@ -355,3 +355,40 @@ func imageExists(ctx context.Context, cli DockerClient, image string) bool {
 	_, _, err := cli.ImageInspectWithRaw(ctx, image)
 	return err == nil
 }
+
+// WaitForHealth polls the container health status until healthy or timeout.
+// Returns nil immediately if the container has no health check configured.
+func WaitForHealth(cfg config.Config, timeout time.Duration) error {
+	cli, err := newClientFunc()
+	if err != nil {
+		return fmt.Errorf("docker client: %w", err)
+	}
+	defer cli.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		info, err := cli.ContainerInspect(ctx, cfg.ProxyContainer)
+		if err != nil {
+			return fmt.Errorf("inspect proxy: %w", err)
+		}
+		if info.State.Health == nil {
+			return nil // no health check configured
+		}
+		switch info.State.Health.Status {
+		case "healthy":
+			return nil
+		case "unhealthy":
+			return fmt.Errorf("proxy container is unhealthy")
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("health check timed out after %s", timeout)
+		case <-ticker.C:
+		}
+	}
+}

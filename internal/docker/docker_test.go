@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -315,5 +316,69 @@ func TestProxyConnectedContainers(t *testing.T) {
 	}
 	if len(names) != 2 {
 		t.Errorf("expected 2 connected containers, got %d", len(names))
+	}
+}
+
+// --- WaitForHealth tests ---
+
+func TestWaitForHealth_Healthy(t *testing.T) {
+	mock := &mockClient{
+		inspectFn: func(_ context.Context, _ string) (types.ContainerJSON, error) {
+			return types.ContainerJSON{
+				ContainerJSONBase: &types.ContainerJSONBase{
+					State: &types.ContainerState{
+						Health: &types.Health{Status: "healthy"},
+					},
+				},
+				Config: &container.Config{},
+			}, nil
+		},
+	}
+	defer withMock(mock)()
+
+	if err := WaitForHealth(testCfg(), 5*time.Second); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWaitForHealth_NoHealthCheck(t *testing.T) {
+	mock := &mockClient{
+		inspectFn: func(_ context.Context, _ string) (types.ContainerJSON, error) {
+			return types.ContainerJSON{
+				ContainerJSONBase: &types.ContainerJSONBase{
+					State: &types.ContainerState{Health: nil},
+				},
+				Config: &container.Config{},
+			}, nil
+		},
+	}
+	defer withMock(mock)()
+
+	if err := WaitForHealth(testCfg(), 5*time.Second); err != nil {
+		t.Fatalf("expected nil for container without health check, got: %v", err)
+	}
+}
+
+func TestWaitForHealth_Unhealthy(t *testing.T) {
+	mock := &mockClient{
+		inspectFn: func(_ context.Context, _ string) (types.ContainerJSON, error) {
+			return types.ContainerJSON{
+				ContainerJSONBase: &types.ContainerJSONBase{
+					State: &types.ContainerState{
+						Health: &types.Health{Status: "unhealthy"},
+					},
+				},
+				Config: &container.Config{},
+			}, nil
+		},
+	}
+	defer withMock(mock)()
+
+	err := WaitForHealth(testCfg(), 5*time.Second)
+	if err == nil {
+		t.Fatal("expected error for unhealthy container")
+	}
+	if !strings.Contains(err.Error(), "unhealthy") {
+		t.Errorf("expected unhealthy error, got: %v", err)
 	}
 }

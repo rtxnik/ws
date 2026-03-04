@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rtxnik/ws/internal/config"
@@ -27,9 +28,23 @@ var proxyUpCmd = &cobra.Command{
 	Short: "Start the proxy container",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if err := output.RunWithSpinner("Starting proxy", func() error {
-			return docker.ProxyUp(cfg)
-		}); err != nil {
+		noWait, _ := cmd.Flags().GetBool("no-wait")
+
+		steps := []output.Step{
+			{Name: "Starting proxy", Fn: func() error {
+				return docker.ProxyUp(cfg)
+			}},
+		}
+		if !noWait {
+			steps = append(steps, output.Step{
+				Name: "Waiting for health check",
+				Fn: func() error {
+					return docker.WaitForHealth(cfg, 60*time.Second)
+				},
+			})
+		}
+
+		if err := output.NewStepRunner(steps...).Run(); err != nil {
 			fmt.Fprintln(os.Stderr, output.RenderError(output.ErrorDetail{
 				Title:       "Failed to start proxy",
 				Context:     map[string]string{"Error": err.Error()},
@@ -191,6 +206,9 @@ var proxyRebuildCmd = &cobra.Command{
 				}
 				return nil
 			}},
+			output.Step{Name: "Waiting for health check", Fn: func() error {
+				return docker.WaitForHealth(cfg, 60*time.Second)
+			}},
 			output.Step{Name: "Cleaning old images", Fn: func() error {
 				return exec.Command("docker", "image", "prune", "-f").Run()
 			}},
@@ -343,6 +361,7 @@ func warnProxyConnected(cfg config.Config) {
 }
 
 func init() {
+	proxyUpCmd.Flags().Bool("no-wait", false, "Skip health check wait after starting")
 	proxyInitCmd.Flags().Bool("add", false, "Add node to existing config instead of creating new")
 	proxyDownCmd.Flags().BoolP("force", "f", false, "Skip confirmation for connected workspaces")
 	proxyRebuildCmd.Flags().BoolP("force", "f", false, "Skip confirmation for connected workspaces")
