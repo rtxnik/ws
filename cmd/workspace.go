@@ -251,6 +251,67 @@ var codeCmd = &cobra.Command{
 	},
 }
 
+var restartCmd = &cobra.Command{
+	Use:         "restart <name>",
+	Short:       "Restart a workspace",
+	Args:        cobra.ExactArgs(1),
+	Annotations: wsAnnotation,
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := config.Load()
+		name := args[0]
+		source := filepath.Join(cfg.WorkspacesDir, name)
+
+		steps := []output.Step{
+			{Name: "Starting container", Fn: func() error {
+				return workspace.DevpodUp(source)
+			}},
+		}
+
+		// Only stop if workspace is currently running.
+		workspaces, _ := workspace.List(cfg)
+		for _, ws := range workspaces {
+			if ws.Name == name && strings.EqualFold(ws.Status, "running") {
+				steps = append([]output.Step{
+					{Name: "Stopping workspace", Fn: func() error {
+						return workspace.DevpodStop(name)
+					}},
+				}, steps...)
+				break
+			}
+		}
+
+		if err := output.NewStepRunner(steps...).Run(); err != nil {
+			output.Die(err.Error())
+		}
+	},
+}
+
+var logsCmd = &cobra.Command{
+	Use:         "logs <name>",
+	Short:       "Show workspace logs",
+	Args:        cobra.ExactArgs(1),
+	Annotations: wsAnnotation,
+	Run: func(cmd *cobra.Command, args []string) {
+		name := args[0]
+		follow, _ := cmd.Flags().GetBool("follow")
+
+		// Try journalctl inside the workspace first.
+		journalArgs := []string{"ssh", name, "--", "journalctl", "--user", "-n", "50", "--no-pager"}
+		if follow {
+			journalArgs = append(journalArgs, "-f")
+		}
+		c := exec.Command("devpod", journalArgs...)
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+		if err := c.Run(); err != nil {
+			// Fall back to devpod logs.
+			if err := workspace.DevpodLogs(name); err != nil {
+				output.Die(err.Error())
+			}
+		}
+	},
+}
+
 // selectWorkspace shows an interactive selector of workspaces and returns
 // the selected name. Exits if no workspaces exist or user cancels.
 func selectWorkspace() string {
@@ -275,12 +336,15 @@ func selectWorkspace() string {
 func init() {
 	newCmd.Flags().Bool("proxy", false, "Enable proxy networking")
 	deleteCmd.Flags().BoolP("force", "f", false, "Skip delete confirmation")
+	logsCmd.Flags().BoolP("follow", "f", false, "Follow log output")
 	rootCmd.AddCommand(newCmd)
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(detectCmd)
 	rootCmd.AddCommand(startCmd)
 	rootCmd.AddCommand(stopCmd)
+	rootCmd.AddCommand(restartCmd)
 	rootCmd.AddCommand(deleteCmd)
 	rootCmd.AddCommand(sshCmd)
 	rootCmd.AddCommand(codeCmd)
+	rootCmd.AddCommand(logsCmd)
 }

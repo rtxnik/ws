@@ -70,9 +70,11 @@ func init() {
 	// Dynamic completions for workspace commands.
 	startCmd.ValidArgsFunction = workspaceNames
 	stopCmd.ValidArgsFunction = workspaceNames
+	restartCmd.ValidArgsFunction = workspaceNames
 	deleteCmd.ValidArgsFunction = workspaceNames
 	sshCmd.ValidArgsFunction = workspaceNames
 	codeCmd.ValidArgsFunction = workspaceNames
+	logsCmd.ValidArgsFunction = workspaceNames
 
 	// ws new <name> <profile> — second arg is profile name.
 	newCmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

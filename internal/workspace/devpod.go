@@ -36,6 +36,11 @@ func DevpodCode(name string) error {
 	return devpodExec("up", name, "--ide", "vscode")
 }
 
+// DevpodLogs shows workspace logs from devpod.
+func DevpodLogs(name string) error {
+	return devpodExec("logs", name)
+}
+
 func devpodExec(args ...string) error {
 	cmd := exec.Command("devpod", args...)
 	cmd.Stdout = os.Stdout
