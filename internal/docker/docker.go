@@ -12,7 +12,15 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/rtxnik/ws/internal/config"
+)
+
+// Timeouts for Docker operations.
+const (
+	timeoutRead    = 10 * time.Second
+	timeoutWrite   = 30 * time.Second
+	timeoutStop    = 15 * time.Second
 )
 
 // Status holds proxy container status info.
@@ -35,10 +43,15 @@ func ProxyStatus(cfg config.Config) (Status, error) {
 	}
 	defer cli.Close()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutRead)
+	defer cancel()
+
 	info, err := cli.ContainerInspect(ctx, cfg.ProxyContainer)
 	if err != nil {
-		return Status{Running: false}, nil
+		if errdefs.IsNotFound(err) {
+			return Status{Running: false}, nil
+		}
+		return Status{}, fmt.Errorf("inspect proxy: %w", err)
 	}
 
 	var health string
@@ -69,7 +82,8 @@ func ProxyUp(cfg config.Config) error {
 	}
 	defer cli.Close()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutWrite)
+	defer cancel()
 
 	// Check if container already exists.
 	info, err := cli.ContainerInspect(ctx, cfg.ProxyContainer)
@@ -130,9 +144,16 @@ func ProxyDown(cfg config.Config) error {
 	}
 	defer cli.Close()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutStop)
+	defer cancel()
+
 	timeout := 10
-	_ = cli.ContainerStop(ctx, cfg.ProxyContainer, container.StopOptions{Timeout: &timeout})
+	if err := cli.ContainerStop(ctx, cfg.ProxyContainer, container.StopOptions{Timeout: &timeout}); err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("stop proxy: %w", err)
+	}
 	return nil
 }
 
@@ -156,7 +177,9 @@ func ProxyCheck(cfg config.Config) []CheckResult {
 	}
 	defer cli.Close()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutRead)
+	defer cancel()
+
 	if _, err := cli.Ping(ctx); err != nil {
 		return results
 	}
@@ -186,7 +209,10 @@ func ProxyLogs(cfg config.Config, n int) (string, error) {
 	}
 	defer cli.Close()
 
-	reader, err := cli.ContainerLogs(context.Background(), cfg.ProxyContainer, container.LogsOptions{
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutRead)
+	defer cancel()
+
+	reader, err := cli.ContainerLogs(ctx, cfg.ProxyContainer, container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Tail:       fmt.Sprintf("%d", n),
@@ -230,7 +256,9 @@ func ProxyRebuild(cfg config.Config) error {
 
 // ProxyRestart stops and starts the proxy container.
 func ProxyRestart(cfg config.Config) error {
-	_ = ProxyDown(cfg)
+	if err := ProxyDown(cfg); err != nil {
+		return err
+	}
 	return ProxyUp(cfg)
 }
 
@@ -249,10 +277,16 @@ func proxyRecreate(cfg config.Config) error {
 	}
 	defer cli.Close()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutWrite)
+	defer cancel()
+
 	timeout := 10
-	_ = cli.ContainerStop(ctx, cfg.ProxyContainer, container.StopOptions{Timeout: &timeout})
-	_ = cli.ContainerRemove(ctx, cfg.ProxyContainer, container.RemoveOptions{Force: true})
+	if err := cli.ContainerStop(ctx, cfg.ProxyContainer, container.StopOptions{Timeout: &timeout}); err != nil && !errdefs.IsNotFound(err) {
+		return fmt.Errorf("stop proxy: %w", err)
+	}
+	if err := cli.ContainerRemove(ctx, cfg.ProxyContainer, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		return fmt.Errorf("remove proxy: %w", err)
+	}
 
 	return ProxyUp(cfg)
 }
@@ -282,7 +316,9 @@ func ProxyConnectedContainers(cfg config.Config) ([]string, error) {
 	}
 	defer cli.Close()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutRead)
+	defer cancel()
+
 	info, err := cli.NetworkInspect(ctx, cfg.ProxyNetwork, network.InspectOptions{})
 	if err != nil {
 		return nil, nil
