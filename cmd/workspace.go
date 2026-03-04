@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
 	"github.com/rtxnik/ws/internal/config"
 	"github.com/rtxnik/ws/internal/detect"
 	"github.com/rtxnik/ws/internal/output"
@@ -73,12 +71,9 @@ var listCmd = &cobra.Command{
 			return
 		}
 
-		headerStyle := lipgloss.NewStyle().Bold(true).Padding(0, 1)
-		cellStyle := lipgloss.NewStyle().Padding(0, 1)
-
 		rows := make([][]string, 0, len(workspaces))
 		for _, ws := range workspaces {
-			status := formatStatusColored(ws.Status)
+			status := output.StatusText(strings.ToLower(ws.Status))
 			proxy := ""
 			if ws.Proxy {
 				proxy = "⚡"
@@ -86,15 +81,8 @@ var listCmd = &cobra.Command{
 			rows = append(rows, []string{ws.Name, status, ws.Profile, proxy})
 		}
 
-		t := table.New().
-			Headers("NAME", "STATUS", "PROFILE", "PROXY").
-			Rows(rows...).
-			StyleFunc(func(row, col int) lipgloss.Style {
-				if row == table.HeaderRow {
-					return headerStyle
-				}
-				return cellStyle
-			})
+		t := output.NewTable([]string{"NAME", "STATUS", "PROFILE", "PROXY"}).
+			Rows(rows...)
 
 		fmt.Println(t)
 	},
@@ -244,27 +232,6 @@ func selectWorkspace() string {
 	}
 
 	return output.Select("Select workspace:", opts)
-}
-
-var (
-	greenStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
-	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#6b7280"))
-	yellowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#eab308"))
-)
-
-func formatStatusColored(s string) string {
-	switch strings.ToLower(s) {
-	case "running":
-		return greenStyle.Render("● Running")
-	case "stopped":
-		return dimStyle.Render("○ Stopped")
-	case "busy":
-		return yellowStyle.Render("◉ Busy")
-	case "notcreated", "":
-		return dimStyle.Render("○ NotCreated")
-	default:
-		return dimStyle.Render("○ " + s)
-	}
 }
 
 func init() {

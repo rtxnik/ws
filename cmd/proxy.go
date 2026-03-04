@@ -62,26 +62,15 @@ var proxyStatusCmd = &cobra.Command{
 			output.Die(err.Error())
 		}
 
-		stateColor := lipgloss.Color("#ef4444")
-		stateText := "○ Stopped"
+		stateStatus := "stopped"
 		if st.Running {
-			stateColor = lipgloss.Color("#22c55e")
-			stateText = "● Running"
+			stateStatus = "running"
 		}
 
 		var lines []string
-		lines = append(lines, lipgloss.NewStyle().Foreground(stateColor).Bold(true).Render(stateText))
+		lines = append(lines, output.StyleSection.Render(output.StatusText(stateStatus)))
 		if st.Health != "" {
-			healthColor := lipgloss.Color("#6b7280")
-			switch st.Health {
-			case "healthy":
-				healthColor = lipgloss.Color("#22c55e")
-			case "starting":
-				healthColor = lipgloss.Color("#eab308")
-			case "unhealthy":
-				healthColor = lipgloss.Color("#ef4444")
-			}
-			lines = append(lines, fmt.Sprintf("Health:  %s", lipgloss.NewStyle().Foreground(healthColor).Render(st.Health)))
+			lines = append(lines, fmt.Sprintf("Health:  %s", output.StatusText(st.Health)))
 		}
 		if st.Uptime != "" {
 			lines = append(lines, fmt.Sprintf("Uptime:  %s", st.Uptime))
@@ -92,7 +81,7 @@ var proxyStatusCmd = &cobra.Command{
 
 		box := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#3b82f6")).
+			BorderForeground(output.Blue).
 			Padding(0, 1).
 			Render(strings.Join(lines, "\n"))
 
@@ -107,16 +96,13 @@ var proxyCheckCmd = &cobra.Command{
 		cfg := config.Load()
 		results := docker.ProxyCheck(cfg)
 
-		passStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
-		failStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
-
 		passed := 0
 		for _, r := range results {
 			if r.Passed {
-				fmt.Printf("  %s %s\n", passStyle.Render("✓"), r.Name)
+				fmt.Printf("  %s %s\n", output.StyleSuccess.Render("✓"), r.Name)
 				passed++
 			} else {
-				fmt.Printf("  %s %s\n", failStyle.Render("✗"), r.Name)
+				fmt.Printf("  %s %s\n", output.StyleError.Render("✗"), r.Name)
 			}
 		}
 

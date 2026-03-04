@@ -6,8 +6,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
 	"github.com/charmbracelet/x/term"
 	"github.com/mattn/go-isatty"
 	"github.com/rtxnik/ws/internal/config"
@@ -33,9 +31,6 @@ var profilesCmd = &cobra.Command{
 			return
 		}
 
-		headerStyle := lipgloss.NewStyle().Bold(true).Padding(0, 1)
-		cellStyle := lipgloss.NewStyle().Padding(0, 1)
-
 		// Truncate long tool lists based on terminal width.
 		maxTools := 40
 		if w, _, err := term.GetSize(0); err == nil && w > 80 {
@@ -51,15 +46,8 @@ var profilesCmd = &cobra.Command{
 			rows = append(rows, []string{p.Name, p.BaseImage, tools})
 		}
 
-		t := table.New().
-			Headers("NAME", "BASE IMAGE", "TOOLS").
-			Rows(rows...).
-			StyleFunc(func(row, col int) lipgloss.Style {
-				if row == table.HeaderRow {
-					return headerStyle
-				}
-				return cellStyle
-			})
+		t := output.NewTable([]string{"NAME", "BASE IMAGE", "TOOLS"}).
+			Rows(rows...)
 
 		fmt.Println(t)
 	},
