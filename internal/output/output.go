@@ -5,22 +5,16 @@ import (
 	"os"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
 )
 
 var (
-	green  = lipgloss.Color("#22c55e")
-	red    = lipgloss.Color("#ef4444")
-	yellow = lipgloss.Color("#eab308")
-	blue   = lipgloss.Color("#3b82f6")
-	dim    = lipgloss.Color("#6b7280")
+	SectionStyle = StyleHeader
 
-	SectionStyle = lipgloss.NewStyle().Bold(true).Foreground(blue)
-	successStyle = lipgloss.NewStyle().Foreground(green)
-	errorStyle   = lipgloss.NewStyle().Foreground(red)
-	warnStyle    = lipgloss.NewStyle().Foreground(yellow)
-	infoStyle    = lipgloss.NewStyle().Foreground(blue)
-	detailStyle  = lipgloss.NewStyle().Foreground(dim)
+	successStyle = StyleSuccess
+	errorStyle   = StyleError
+	warnStyle    = StyleWarning
+	infoStyle    = StyleInfo
+	detailStyle  = StyleDim
 )
 
 func Info(msg string) {

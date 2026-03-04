@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // SelectOption represents a selectable item with a display label and value.
@@ -40,18 +39,7 @@ func Select(title string, options []SelectOption) string {
 	return selected
 }
 
-// statusLabel formats a workspace status for display in the selector.
+// StatusLabel formats a workspace status for display in the selector.
 func StatusLabel(name, status string) string {
-	var indicator string
-	switch status {
-	case "running":
-		indicator = lipgloss.NewStyle().Foreground(green).Render("● Running")
-	case "stopped":
-		indicator = lipgloss.NewStyle().Foreground(dim).Render("○ Stopped")
-	case "busy":
-		indicator = lipgloss.NewStyle().Foreground(yellow).Render("◉ Busy")
-	default:
-		indicator = lipgloss.NewStyle().Foreground(dim).Render("○ " + status)
-	}
-	return fmt.Sprintf("%s  %s", name, indicator)
+	return fmt.Sprintf("%s  %s", name, StatusText(status))
 }
