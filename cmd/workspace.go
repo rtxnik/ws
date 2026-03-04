@@ -31,7 +31,11 @@ var newCmd = &cobra.Command{
 		}
 
 		if workspace.Exists(cfg, name) {
-			output.Die(fmt.Sprintf("workspace %q already exists", name))
+			fmt.Fprintln(os.Stderr, output.RenderError(output.ErrorDetail{
+				Title:       fmt.Sprintf("Workspace %q already exists", name),
+				Suggestions: []string{"Choose a different name", fmt.Sprintf("Delete existing: ws delete %s", name)},
+			}))
+			os.Exit(1)
 		}
 
 		var profile string
@@ -137,7 +141,11 @@ var startCmd = &cobra.Command{
 		cfg := config.Load()
 		name := args[0]
 		if !workspace.Exists(cfg, name) {
-			output.Die(fmt.Sprintf("workspace %q not found", name))
+			fmt.Fprintln(os.Stderr, output.RenderError(output.ErrorDetail{
+				Title:       fmt.Sprintf("Workspace %q not found", name),
+				Suggestions: []string{"List workspaces: ws list", fmt.Sprintf("Create it: ws new %s", name)},
+			}))
+			os.Exit(1)
 		}
 		source := filepath.Join(cfg.WorkspacesDir, name)
 		if err := output.RunWithSpinner(fmt.Sprintf("Starting workspace %q", name), func() error {

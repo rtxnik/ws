@@ -29,7 +29,12 @@ var proxyUpCmd = &cobra.Command{
 		if err := output.RunWithSpinner("Starting proxy", func() error {
 			return docker.ProxyUp(cfg)
 		}); err != nil {
-			output.Die(err.Error())
+			fmt.Fprintln(os.Stderr, output.RenderError(output.ErrorDetail{
+				Title:       "Failed to start proxy",
+				Context:     map[string]string{"Error": err.Error()},
+				Suggestions: []string{"Check config: ws proxy check", "Initialize config: ws proxy init <vless-uri>", "Rebuild image: ws proxy rebuild"},
+			}))
+			os.Exit(1)
 		}
 	},
 }
